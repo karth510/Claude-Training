@@ -3,20 +3,55 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
 
 jobs:
-  deploy:
+  check:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # CLAUDE.md constraints: no storage, no alert/confirm, no !important,
+      # and the FormSubmit endpoint is the only URL allowed in the app.
+      - name: Forbidden APIs
+        run: |
+          hits=$(grep -nE 'localStorage|sessionStorage|indexedDB|document\.cookie|https?://|alert\(|confirm\(|!important' index.html \
+            | grep -v 'const FORMSUBMIT_ENDPOINT = "https://formsubmit.co/ajax/' || true)
+          if [ -n "$hits" ]; then echo "Forbidden API or URL found:"; echo "$hits"; exit 1; fi
+
+      - name: No extra network calls
+        run: |
+          hits=$(grep -nE 'XMLHttpRequest|navigator\.sendBeacon|WebSocket|EventSource|<script[^>]+src=|<link[^>]+href=|<img[^>]+src=|@import|url\(' index.html || true)
+          fetches=$(grep -cE 'fetch\(' index.html || true)
+          if [ -n "$hits" ]; then echo "Unexpected network use:"; echo "$hits"; exit 1; fi
+          if [ "$fetches" -ne 1 ]; then echo "Expected exactly one fetch() (FormSubmit), found $fetches"; exit 1; fi
+
+      - name: Script syntax
+        run: |
+          sed -n '/^<script>$/,/^<\/script>$/p' index.html | sed '1d;$d' > "$RUNNER_TEMP/app.js"
+          node --check "$RUNNER_TEMP/app.js"
+
+      - name: Secret patterns
+        run: |
+          hits=$(git ls-files -z | grep -zv '^\.github/workflows/' | xargs -0 grep -nEI \
+            'BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_|xox[baprs]-|sk-[A-Za-z0-9]{20,}|(api[_-]?key|secret|passw(or)?d|bearer)["'"'"' ]*[:=] *["'"'"'][^"'"'"']{8,}' || true)
+          if [ -n "$hits" ]; then echo "Possible secret:"; echo "$hits"; exit 1; fi
+
+  deploy:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

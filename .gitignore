@@ -1,1 +1,20 @@
+# OS / editor junk
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Local-only Claude Code settings
+.claude/settings.local.json
+
+# Secrets and local data
+.env*
+*.pem
+*.key
+*.p12
+id_rsa*
+*.sqlite
+*.log
+node_modules/
+_site/
